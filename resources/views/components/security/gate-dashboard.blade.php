@@ -16,6 +16,7 @@ new class extends Component
     
     public $checkedItems = [];
     public $securityPhoto;
+    public $securityPhotoBase64;
     public $notes;
     
     public function searchBarcode()
@@ -68,15 +69,26 @@ new class extends Component
     public function processCheckIn($status)
     {
         $this->validate([
-            'securityPhoto' => 'required|image|max:5120',
+            'securityPhoto' => 'required_without:securityPhotoBase64|image|max:5120|nullable',
+            'securityPhotoBase64' => 'required_without:securityPhoto|string|nullable',
             'notes' => 'required|string|min:5',
         ], [
-            'securityPhoto.required' => 'Wajib mengambil foto kendaraan/barang.',
+            'securityPhoto.required_without' => 'Wajib mengambil foto kendaraan/barang via file atau kamera.',
+            'securityPhotoBase64.required_without' => 'Wajib mengambil foto kendaraan/barang via kamera atau file.',
             'notes.required' => 'Catatan pemeriksaan wajib diisi.',
             'notes.min' => 'Catatan pemeriksaan minimal 5 karakter.'
         ]);
 
-        $photoPath = $this->securityPhoto->store('security_photos', 'public');
+        $photoPath = '';
+        if ($this->securityPhotoBase64) {
+            $image = str_replace('data:image/jpeg;base64,', '', $this->securityPhotoBase64);
+            $image = str_replace(' ', '+', $image);
+            $imageName = 'security_photos/'.\Illuminate\Support\Str::random(40).'.jpg';
+            \Illuminate\Support\Facades\Storage::disk('public')->put($imageName, base64_decode($image));
+            $photoPath = $imageName;
+        } else {
+            $photoPath = $this->securityPhoto->store('security_photos', 'public');
+        }
 
         $actionName = '';
         if($status === 'IN_LOCATION' || $status === 'CHECKED_OUT') {
@@ -120,6 +132,7 @@ new class extends Component
         $this->inboundRequest = null;
         $this->checkedItems = [];
         $this->securityPhoto = null;
+        $this->securityPhotoBase64 = null;
         $this->notes = null;
     }
 
@@ -152,7 +165,12 @@ new class extends Component
 
             @if(!$inboundRequest)
                 <div class="flex flex-col items-center justify-center py-8">
-                    <div id="reader" class="w-full max-w-sm mb-6 rounded-lg overflow-hidden shadow-lg border-2 border-indigo-500 bg-black min-h-[250px]"></div>
+                    <div wire:ignore id="reader" class="w-full max-w-sm mb-6 rounded-lg overflow-hidden shadow-lg border-2 border-indigo-500 bg-gray-900 min-h-[250px] flex flex-col items-center justify-center relative">
+                        <div class="absolute z-0 flex flex-col items-center text-indigo-400">
+                            <svg class="w-10 h-10 mb-2 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <span class="text-xs font-bold">Memulai Kamera...</span>
+                        </div>
+                    </div>
                     <div class="w-full max-w-sm flex space-x-2">
                         <x-text-input wire:model="manualBarcode" type="text" class="block w-full text-center text-lg uppercase font-mono tracking-widest" placeholder="Masukan kode unik" />
                         <button wire:click="searchManual" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-200">
@@ -161,22 +179,50 @@ new class extends Component
                     </div>
                 </div>
 
-                <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+                @script
                 <script>
-                    document.addEventListener('livewire:initialized', () => {
-                        let html5QrcodeScanner = new Html5QrcodeScanner(
-                            "reader",
-                            { fps: 10, qrbox: {width: 250, height: 250}, aspectRatio: 1.0 },
-                            /* verbose= */ false
-                        );
+                    let isScannerActive = false;
+                    let html5QrCode = null;
 
-                        html5QrcodeScanner.render((decodedText, decodedResult) => {
-                            // On Success
-                            @this.manualBarcode = decodedText;
-                            @this.searchManual();
-                            html5QrcodeScanner.clear(); // Stop scanning once found
-                        }, (error) => {
-                            // Ignore scanning errors
+                    const loadAndInitScanner = () => {
+                        if (typeof Html5Qrcode === 'undefined') {
+                            let script = document.createElement('script');
+                            script.src = "https://unpkg.com/html5-qrcode";
+                            script.onload = () => {
+                                startScanner();
+                            };
+                            document.head.appendChild(script);
+                        } else {
+                            startScanner();
+                        }
+                    };
+
+                    const startScanner = () => {
+                        if (isScannerActive) return;
+                        
+                        html5QrCode = new Html5Qrcode("reader");
+                        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+
+                        html5QrCode.start(
+                            { facingMode: "environment" }, 
+                            config,
+                            (decodedText, decodedResult) => {
+                                // On Success
+                                $wire.set('manualBarcode', decodedText);
+                                $wire.searchManual();
+                                
+                                html5QrCode.stop().then(() => {
+                                    html5QrCode.clear();
+                                    isScannerActive = false;
+                                }).catch(err => console.log("Failed to stop scanner", err));
+                            },
+                            (errorMessage) => {
+                                // parse error, ignore
+                            }
+                        ).then(() => {
+                            isScannerActive = true;
+                        }).catch((err) => {
+                            console.error("Gagal memulai kamera", err);
                         });
 
                         Livewire.on('play-sound', (event) => {
@@ -203,8 +249,11 @@ new class extends Component
                                 osc.stop(ctx.currentTime + 0.5);
                             }
                         });
-                    });
+                    };
+                    
+                    loadAndInitScanner();
                 </script>
+                @endscript
                 
                 <!-- Expected Today -->
                 <div class="mt-12 border-t border-gray-200 dark:border-gray-700 pt-8 w-full text-left">
@@ -405,22 +454,131 @@ new class extends Component
                 </h4>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="space-y-4">
-                        <div>
-                            <x-input-label for="securityPhoto" :value="__('Ambil Foto Bukti Aktual (Wajib)')" class="text-xs font-bold uppercase tracking-wider text-indigo-800 dark:text-indigo-400 mb-1" />
-                            <div class="relative group cursor-pointer">
-                                <input wire:model="securityPhoto" type="file" accept="image/*" capture="environment" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" required>
-                                <div class="w-full bg-white dark:bg-gray-800 border-2 border-dashed border-indigo-300 dark:border-indigo-700/50 rounded-xl p-4 flex flex-col items-center justify-center text-center group-hover:border-indigo-500 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/30 transition-colors h-24">
-                                    <svg class="w-6 h-6 text-indigo-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                                    <span class="text-xs text-indigo-600 dark:text-indigo-400 font-medium group-hover:text-indigo-700">Klik / Tap untuk Buka Kamera</span>
+                        <div x-data="{
+                                mode: 'camera', 
+                                stream: null,
+                                takenPhoto: null,
+                                cameraError: null,
+                                
+                                startCamera() {
+                                    this.mode = 'camera';
+                                    this.takenPhoto = null;
+                                    this.cameraError = null;
+                                    $wire.set('securityPhotoBase64', null);
+                                    
+                                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                                        this.cameraError = 'Kamera tidak didukung di browser Anda. Pastikan menggunakan protokol HTTPS atau localhost.';
+                                        return;
+                                    }
+                                    
+                                    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                                        .then(s => {
+                                            this.stream = s;
+                                            if ($refs.videoElement) {
+                                                $refs.videoElement.srcObject = s;
+                                            }
+                                        })
+                                        .catch(err => {
+                                            console.error('Kamera gagal diakses:', err);
+                                            if (err.name === 'NotAllowedError') {
+                                                this.cameraError = 'Akses kamera ditolak. Berikan izin akses kamera pada browser Anda.';
+                                            } else if (err.name === 'NotFoundError') {
+                                                this.cameraError = 'Perangkat kamera tidak ditemukan.';
+                                            } else {
+                                                this.cameraError = 'Gagal mengakses kamera: ' + err.message;
+                                            }
+                                        });
+                                },
+                                
+                                takePhoto() {
+                                    if(this.stream && $refs.videoElement) {
+                                        let canvas = document.createElement('canvas');
+                                        canvas.width = $refs.videoElement.videoWidth || 640;
+                                        canvas.height = $refs.videoElement.videoHeight || 480;
+                                        let ctx = canvas.getContext('2d');
+                                        ctx.drawImage($refs.videoElement, 0, 0, canvas.width, canvas.height);
+                                        this.takenPhoto = canvas.toDataURL('image/jpeg', 0.8);
+                                        $wire.set('securityPhotoBase64', this.takenPhoto);
+                                        this.stopCamera();
+                                    }
+                                },
+                                
+                                stopCamera() {
+                                    if(this.stream) {
+                                        this.stream.getTracks().forEach(track => track.stop());
+                                        this.stream = null;
+                                    }
+                                },
+                                
+                                init() {
+                                    this.startCamera();
+                                    this.$watch('mode', (value) => {
+                                        if (value !== 'camera') this.stopCamera();
+                                        else this.startCamera();
+                                    });
+                                }
+                            }" 
+                            @destroyed="stopCamera()">
+                            
+                            <div class="flex justify-between items-center mb-2">
+                                <x-input-label :value="__('Ambil Foto Bukti Aktual (Wajib)')" class="text-xs font-bold uppercase tracking-wider text-indigo-800 dark:text-indigo-400" />
+                                <div class="flex bg-gray-100 dark:bg-gray-800 p-0.5 rounded-lg border border-gray-200 dark:border-gray-700">
+                                    <button type="button" @click="mode = 'camera'" :class="mode === 'camera' ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-500 hover:text-gray-700'" class="text-[10px] px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                        Buka Kamera
+                                    </button>
+                                    <button type="button" @click="mode = 'file'" :class="mode === 'file' ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-500 hover:text-gray-700'" class="text-[10px] px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                                        Unggah File
+                                    </button>
                                 </div>
                             </div>
-                            <x-input-error :messages="$errors->get('securityPhoto')" class="mt-2 text-xs" />
-                            <div wire:loading wire:target="securityPhoto" class="text-xs text-indigo-600 font-medium mt-2 animate-pulse">Memproses unggahan foto...</div>
-                            @if($securityPhoto)
-                                <div class="text-xs text-green-600 dark:text-green-400 font-medium mt-2 flex items-center gap-1">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Foto berhasil ditambahkan
+
+                            <!-- Camera View -->
+                            <div x-show="mode === 'camera' && !takenPhoto" class="relative w-full bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center border-2 border-indigo-200 dark:border-indigo-800">
+                                <template x-if="cameraError">
+                                    <div class="p-4 text-center text-white z-10 flex flex-col items-center">
+                                        <svg class="w-10 h-10 text-red-500 mb-2 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                        <p class="text-xs font-semibold mb-2" x-text="cameraError"></p>
+                                        <button type="button" @click="mode = 'file'" class="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-3 py-1.5 rounded-lg font-bold transition">Gunakan Unggah File</button>
+                                    </div>
+                                </template>
+                                <video x-show="!cameraError" x-ref="videoElement" autoplay playsinline class="absolute inset-0 w-full h-full object-cover"></video>
+                                <button x-show="!cameraError" type="button" @click="takePhoto()" class="absolute bottom-4 z-10 bg-white text-indigo-600 rounded-full p-4 shadow-xl hover:bg-gray-100 transition transform hover:scale-105 border-4 border-indigo-200" title="Jepret Foto">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path></svg>
+                                </button>
+                            </div>
+
+                            <!-- Taken Photo Preview -->
+                            <div x-show="takenPhoto" class="relative w-full bg-gray-900 rounded-xl overflow-hidden aspect-video border-2 border-green-500 shadow-lg" style="display: none;">
+                                <img :src="takenPhoto" class="absolute inset-0 w-full h-full object-cover">
+                                <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent"></div>
+                                <div class="absolute bottom-0 left-0 right-0 p-4 flex justify-between items-center">
+                                    <span class="text-xs text-white font-bold flex items-center gap-1"><svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Foto Tersimpan</span>
+                                    <button type="button" @click="startCamera()" class="bg-white/20 backdrop-blur-sm text-white rounded-full px-3 py-1.5 text-xs font-bold hover:bg-white/30 transition flex items-center gap-1 border border-white/30">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                        Ulangi
+                                    </button>
                                 </div>
-                            @endif
+                            </div>
+
+                            <!-- File Upload View -->
+                            <div x-show="mode === 'file'" class="relative group cursor-pointer" style="display: none;">
+                                <input wire:model="securityPhoto" type="file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+                                <div class="w-full bg-white dark:bg-gray-800 border-2 border-dashed border-indigo-300 dark:border-indigo-700/50 rounded-xl p-4 flex flex-col items-center justify-center text-center group-hover:border-indigo-500 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/30 transition-colors h-32">
+                                    <svg class="w-8 h-8 text-indigo-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                    <span class="text-xs text-indigo-600 dark:text-indigo-400 font-medium group-hover:text-indigo-700">Klik untuk Memilih File atau Galeri</span>
+                                </div>
+                                <div wire:loading wire:target="securityPhoto" class="text-xs text-indigo-600 font-medium mt-2 animate-pulse text-center">Memproses unggahan foto...</div>
+                                @if($securityPhoto && !$securityPhotoBase64)
+                                    <div class="text-xs text-green-600 dark:text-green-400 font-medium mt-2 flex items-center justify-center gap-1">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> File siap diproses
+                                    </div>
+                                @endif
+                            </div>
+
+                            <x-input-error :messages="$errors->get('securityPhoto')" class="mt-2 text-xs text-center" />
+                            <x-input-error :messages="$errors->get('securityPhotoBase64')" class="mt-2 text-xs text-center" />
                         </div>
                     </div>
                     <div>
