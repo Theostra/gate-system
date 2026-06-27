@@ -1,0 +1,128 @@
+========================================================================
+                      TUTORIAL PERSIAPAN & PENGGUNAAN
+                       Aplikasi Gate System Enterprise
+                          PT Bio Farma (Persero)
+========================================================================
+
+Selamat! Aplikasi Gate System Enterprise telah selesai dikonfigurasi.
+File ini menjelaskan cara menjalankan aplikasi dan data akun untuk masuk.
+
+------------------------------------------------------------------------
+1. CARA MENJALANKAN SERVER APLIKASI & ANTRIAN AI (CARA PRAKTIS)
+------------------------------------------------------------------------
+Kami telah membuat script batch (.bat) agar Anda dapat menyalakan server 
+dengan mudah tanpa perlu mengatur Path Windows secara manual.
+
+Jalankan kedua file berikut secara bersamaan (keduanya harus tetap menyala, cukup klik dua kali pada file tersebut):
+
+  a. Jalankan file [1-start-server.bat] (Klik 2x untuk membuka)
+     - Berfungsi menyalakan server web utama.
+     - Akses aplikasi di browser Anda pada alamat: http://127.0.0.1:8000
+
+  b. Jalankan file [2-start-queue.bat] (Klik 2x untuk membuka)
+     - Berfungsi memproses tugas antrean (seperti validasi dokumen oleh AI).
+     - Jika file ini tidak dijalankan, permohonan yang dikirimkan akan 
+       selamanya berstatus "PENDING" atau "PROCESSING" pada validasi AI.
+
+------------------------------------------------------------------------
+2. DAFTAR PERINTAH CLI (COMMAND LINE) DARI AWAL
+------------------------------------------------------------------------
+Jika Anda ingin menjalankan atau men-setup ulang aplikasi secara manual 
+menggunakan Command Prompt / PowerShell, berikut adalah perintahnya:
+
+  A. TAHAP PERSIAPAN AWAL (SETUP)
+     Perintah ini dijalankan sekali di awal untuk menyiapkan database:
+     
+     1. Menyalin konfigurasi file environment:
+        copy .env.example .env
+        
+     2. Menginstal seluruh package PHP:
+        php composer.phar install
+        
+     3. Membuat kunci enkripsi aplikasi:
+        php artisan key:generate
+        
+     4. Membuat database SQLite kosong:
+        New-Item -ItemType File -Path "database/database.sqlite" -Force
+        
+     5. Membuat tabel database (migrasi):
+        php artisan migrate --force
+        
+     6. Membuat tautan storage ke public (agar foto muncul):
+        php artisan storage:link
+        
+     7. Mengisi database dengan data akun uji coba (seeding):
+        php artisan db:seed
+        
+     8. Menginstal package frontend (Node.js/NPM):
+        npm install
+        
+     9. Melakukan kompilasi aset frontend (Vite):
+        npm run build
+
+  B. TAHAP MENJALANKAN APLIKASI SEHARI-HARI
+     Buka dua terminal Command Prompt / PowerShell terpisah:
+     
+     * Terminal 1 (Server Utama):
+       php artisan serve
+       
+     * Terminal 2 (Antrean AI):
+       php artisan queue:listen
+
+------------------------------------------------------------------------
+3. DATA AKUN PENGGUNA (LOGIN CREDENTIALS)
+------------------------------------------------------------------------
+Berikut adalah daftar akun uji coba yang sudah siap digunakan:
+
+  * PIC / KARYAWAN (Untuk membuat permohonan masuk/keluar barang)
+    - Email    : karyawan@biofarma.co.id
+    - Password : password
+    - Jabatan  : Produksi (PIC)
+
+  * GENERAL AFFAIRS / GA (Untuk memvalidasi & menyetujui dokumen)
+    - Email    : ga@biofarma.co.id
+    - Password : password
+
+  * SECURITY / KEAMANAN GERBANG (Untuk memindai barcode & cek fisik barang)
+    - Email    : security@biofarma.co.id
+    - Password : password
+
+  * MANAGEMENT (Untuk memantau log aktivitas & grafik laporan)
+    - Email    : management@biofarma.co.id
+    - Password : password
+
+------------------------------------------------------------------------
+4. MENYALAKAN DAN MENGGUNAKAN FITUR AI (GEMINI)
+------------------------------------------------------------------------
+Aplikasi ini dilengkapi dengan fitur AI verifikator berbasis Gemini 3.5 Flash 
+yang bertugas mencocokkan dokumen Surat Jalan (Manifest), foto plat nomor 
+kendaraan, dan foto fisik barang.
+
+  a. Mode Simulasi (Mock Mode):
+     Jika Anda membiarkan GEMINI_API_KEY kosong di file .env, sistem akan 
+     berjalan dalam "Mode Simulasi" secara otomatis sehingga Anda tetap 
+     dapat menguji alur aplikasi tanpa kuota API Key asli.
+
+  b. Mode AI Asli (Real Gemini AI):
+     Untuk menghubungkan dengan server asli Google Gemini:
+     1. Buka file [.env] di folder utama aplikasi menggunakan text editor.
+     2. Temukan baris:
+        GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+        (API Key Anda perlu dikonfigurasi di file tersebut).
+     3. Pastikan worker antrean [2-start-queue.bat] (cukup klik dua kali untuk menjalankan) tetap berjalan agar 
+        dapat mengirim data dokumen & foto ke server Gemini AI.
+
+------------------------------------------------------------------------
+5. SKENARIO ALUR PENGUJIAN (WORKFLOW TEST)
+------------------------------------------------------------------------
+Untuk menguji aplikasi secara lengkap:
+  1. Login sebagai Karyawan (karyawan@biofarma.co.id). Buat permohonan masuk 
+     baru (Gate Request), isi formulir, unggah file/foto, lalu kirim.
+  2. Login sebagai GA (ga@biofarma.co.id). Di halaman dashboard, setujui 
+     permohonan tersebut. AI secara otomatis akan berjalan di latar belakang 
+     (jika queue worker aktif) untuk memverifikasi dokumen.
+  3. Login sebagai Security (security@biofarma.co.id). Masuk ke halaman scan, 
+     verifikasi kesesuaian fisik muatan, lalu selesaikan permohonan (Check In).
+
+Selamat Mencoba!
+========================================================================
